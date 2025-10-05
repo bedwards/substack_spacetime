@@ -38,7 +38,8 @@ const SubstackFeedReader = () => {
     setError('');
 
     try {
-      const response = await fetch('https://substackspacetime.brian-mabry-edwards.workers.dev/', {
+      // const response = await fetch('https://substackspacetime.brian-mabry-edwards.workers.dev/', {
+      const response = await fetch('http://localhost:3000/inbox', {
         method: 'POST',
         headers: {
           'X-Substack-Token': token
