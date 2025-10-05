@@ -43,8 +43,8 @@ const SubstackFeedReader = () => {
         headers: {
           'Cookie': `substack.sid=${token}`,
           'Content-Type': 'application/json'
-        },
-        credentials: 'include'
+        }
+        // credentials: 'include'
       });
 
       if (!response.ok) throw new Error('Failed to fetch feed. Check your token.');
