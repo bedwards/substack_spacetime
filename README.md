@@ -1,5 +1,13 @@
 # Substack SpaceTime
 
+Get Your Substack Token:
+
+- Go to substack.com and log in
+- Press F12 to open Developer Tools
+- Go to Application → Cookies → https://substack.com
+- Find the cookie named substack.sid
+- Copy its value
+
 ### A calendar-based reader for longform Substack writing
 
 Substack SpaceTime lets you explore your Substack subscriptions through time and depth, not noise. It focuses on what matters—the text.

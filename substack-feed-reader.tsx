@@ -1,0 +1,474 @@
+import { useState, useEffect } from 'react';
+import { Calendar, Clock, User, FileText, Filter, BarChart3, RefreshCw } from 'lucide-react';
+
+const SubstackFeedReader = () => {
+  const [token, setToken] = useState('');
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [posts, setPosts] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [minWordCount, setMinWordCount] = useState(0);
+  const [selectedBucket, setSelectedBucket] = useState('all');
+  const [sortBy, setSortBy] = useState('date');
+  const [viewMode, setViewMode] = useState('list'); // 'list' or 'calendar'
+
+  const fetchFeed = async () => {
+    if (!token) {
+      setError('Please enter your Substack token');
+      return;
+    }
+
+    setLoading(true);
+    setError('');
+
+    try {
+      const response = await fetch('https://substack.com/api/v1/reader/inbox', {
+        headers: {
+          'Cookie': `substack.sid=${token}`,
+          'Content-Type': 'application/json'
+        },
+        credentials: 'include'
+      });
+
+      if (!response.ok) throw new Error('Failed to fetch feed. Check your token.');
+
+      const data = await response.json();
+      
+      // Process posts
+      const processedPosts = (data.posts || [])
+        .filter(post => {
+          // Filter out non-text content
+          if (post.type !== 'newsletter') return false;
+          if (post.podcast_url || post.videoUpload) return false;
+          return true;
+        })
+        .map(post => {
+          const wordCount = estimateWordCount(post.body_html || '');
+          const readingTime = Math.ceil(wordCount / 200); // 200 words per minute
+          
+          return {
+            id: post.id,
+            title: post.title,
+            subtitle: post.subtitle,
+            url: post.canonical_url,
+            publishedAt: new Date(post.post_date),
+            author: {
+              name: post.publishedBylines?.[0]?.name || 'Unknown',
+              publication: post.publication?.name || 'Unknown',
+              photoUrl: post.publishedBylines?.[0]?.photo_url
+            },
+            publication: {
+              name: post.publication?.name,
+              url: post.publication?.base_url,
+              logoUrl: post.publication?.logo_url
+            },
+            wordCount,
+            readingTime,
+            preview: extractPreview(post.body_html || '')
+          };
+        });
+
+      // Assign buckets (evenly distributed by word count quartiles)
+      const sortedByLength = [...processedPosts].sort((a, b) => a.wordCount - b.wordCount);
+      const bucketSize = Math.ceil(sortedByLength.length / 4);
+      
+      processedPosts.forEach(post => {
+        const index = sortedByLength.indexOf(post);
+        if (index < bucketSize) post.bucket = 'Quick Reads';
+        else if (index < bucketSize * 2) post.bucket = 'Short Articles';
+        else if (index < bucketSize * 3) post.bucket = 'Medium Pieces';
+        else post.bucket = 'Deep Dives';
+      });
+
+      setPosts(processedPosts);
+      setIsAuthenticated(true);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const estimateWordCount = (html) => {
+    const text = html.replace(/<[^>]*>/g, ' ');
+    return text.split(/\s+/).filter(word => word.length > 0).length;
+  };
+
+  const extractPreview = (html) => {
+    const text = html.replace(/<[^>]*>/g, ' ').trim();
+    return text.substring(0, 200) + (text.length > 200 ? '...' : '');
+  };
+
+  const filteredPosts = posts
+    .filter(post => post.wordCount >= minWordCount)
+    .filter(post => selectedBucket === 'all' || post.bucket === selectedBucket)
+    .sort((a, b) => {
+      if (sortBy === 'date') return b.publishedAt - a.publishedAt;
+      if (sortBy === 'length') return b.wordCount - a.wordCount;
+      return 0;
+    });
+
+  const buckets = ['Quick Reads', 'Short Articles', 'Medium Pieces', 'Deep Dives'];
+  const bucketCounts = buckets.reduce((acc, bucket) => {
+    acc[bucket] = posts.filter(p => p.bucket === bucket).length;
+    return acc;
+  }, {});
+
+  const publicationFrequency = posts.reduce((acc, post) => {
+    const pub = post.publication.name;
+    acc[pub] = (acc[pub] || 0) + 1;
+    return acc;
+  }, {});
+
+  const getPostsByDate = () => {
+    const byDate = {};
+    filteredPosts.forEach(post => {
+      const dateKey = post.publishedAt.toISOString().split('T')[0];
+      if (!byDate[dateKey]) byDate[dateKey] = [];
+      byDate[dateKey].push(post);
+    });
+    return byDate;
+  };
+
+  const postsByDate = getPostsByDate();
+  const dates = Object.keys(postsByDate).sort().reverse();
+
+  const CalendarView = () => (
+    <div className="space-y-6">
+      {dates.map(date => {
+        const datePosts = postsByDate[date];
+        const dateObj = new Date(date);
+        
+        return (
+          <div key={date} className="bg-white rounded-lg shadow-sm border p-4">
+            <div className="text-lg font-semibold mb-4 pb-2 border-b">
+              {dateObj.toLocaleDateString('en-US', { 
+                weekday: 'long', 
+                year: 'numeric', 
+                month: 'long', 
+                day: 'numeric' 
+              })}
+              <span className="text-sm font-normal text-gray-500 ml-2">
+                ({datePosts.length} post{datePosts.length !== 1 ? 's' : ''})
+              </span>
+            </div>
+            
+            <div className="space-y-3">
+              {datePosts.map(post => (
+                <div key={post.id} className="flex gap-3 items-start py-2">
+                  {post.publication.logoUrl && (
+                    <img
+                      src={post.publication.logoUrl}
+                      alt={post.publication.name}
+                      className="w-10 h-10 rounded flex-shrink-0"
+                    />
+                  )}
+                  
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-start justify-between gap-2">
+                      <a
+                        href={post.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="font-medium hover:text-blue-600 flex-1"
+                      >
+                        {post.title}
+                      </a>
+                      <span className="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded whitespace-nowrap">
+                        {post.bucket}
+                      </span>
+                    </div>
+                    
+                    <div className="flex items-center gap-3 text-xs text-gray-600 mt-1">
+                      <span>{post.author.name}</span>
+                      <span>•</span>
+                      <span>{post.publication.name}</span>
+                      <span>•</span>
+                      <span>{post.publishedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                      <span>•</span>
+                      <span>{post.wordCount.toLocaleString()} words</span>
+                      <span>•</span>
+                      <span>{post.readingTime} min</span>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+
+  if (!isAuthenticated) {
+    return (
+      <div className="min-h-screen bg-gray-50 p-8">
+        <div className="max-w-2xl mx-auto">
+          <h1 className="text-3xl font-bold mb-6">Substack Feed Reader</h1>
+          
+          <div className="bg-white rounded-lg shadow p-6 mb-4">
+            <h2 className="text-xl font-semibold mb-4">Authentication Required</h2>
+            <p className="text-gray-600 mb-4">
+              To access your Substack feed, you need to provide your session token:
+            </p>
+            <ol className="list-decimal list-inside space-y-2 text-sm text-gray-600 mb-4">
+              <li>Open substack.com in your browser and log in</li>
+              <li>Open Developer Tools (F12)</li>
+              <li>Go to Application → Cookies → https://substack.com</li>
+              <li>Find the cookie named "substack.sid"</li>
+              <li>Copy its value and paste below</li>
+            </ol>
+            
+            <input
+              type="password"
+              value={token}
+              onChange={(e) => setToken(e.target.value)}
+              placeholder="Paste your substack.sid cookie value"
+              className="w-full px-4 py-2 border rounded mb-4"
+            />
+            
+            {error && (
+              <div className="bg-red-50 text-red-700 p-3 rounded mb-4">
+                {error}
+              </div>
+            )}
+            
+            <button
+              onClick={fetchFeed}
+              disabled={loading}
+              className="w-full bg-blue-600 text-white py-2 px-4 rounded hover:bg-blue-700 disabled:opacity-50"
+            >
+              {loading ? 'Loading...' : 'Load Feed'}
+            </button>
+          </div>
+          
+          <div className="bg-blue-50 border border-blue-200 rounded p-4 text-sm text-gray-700">
+            <strong>Privacy Note:</strong> Your token is stored only in memory and never sent anywhere except directly to Substack's API. Refresh the page to clear it.
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-gray-50">
+      <div className="bg-white border-b sticky top-0 z-10">
+        <div className="max-w-7xl mx-auto px-4 py-4">
+          <div className="flex items-center justify-between mb-4">
+            <h1 className="text-2xl font-bold">Your Substack Feed</h1>
+            <button
+              onClick={fetchFeed}
+              className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+            >
+              <RefreshCw className="w-4 h-4" />
+              Refresh
+            </button>
+          </div>
+          
+          <div className="flex gap-4 flex-wrap">
+            <div className="flex items-center gap-2">
+              <Filter className="w-4 h-4" />
+              <select
+                value={selectedBucket}
+                onChange={(e) => setSelectedBucket(e.target.value)}
+                className="border rounded px-3 py-1"
+              >
+                <option value="all">All Buckets</option>
+                {buckets.map(bucket => (
+                  <option key={bucket} value={bucket}>
+                    {bucket} ({bucketCounts[bucket] || 0})
+                  </option>
+                ))}
+              </select>
+            </div>
+            
+            <div className="flex items-center gap-2">
+              <FileText className="w-4 h-4" />
+              <input
+                type="number"
+                value={minWordCount}
+                onChange={(e) => setMinWordCount(Number(e.target.value))}
+                placeholder="Min words"
+                className="border rounded px-3 py-1 w-32"
+              />
+            </div>
+            
+            <div className="flex items-center gap-2">
+              <BarChart3 className="w-4 h-4" />
+              <select
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value)}
+                className="border rounded px-3 py-1"
+              >
+                <option value="date">Sort by Date</option>
+                <option value="length">Sort by Length</option>
+              </select>
+            </div>
+            
+            <div className="flex items-center gap-2">
+              <Calendar className="w-4 h-4" />
+              <select
+                value={viewMode}
+                onChange={(e) => setViewMode(e.target.value)}
+                className="border rounded px-3 py-1"
+              >
+                <option value="list">List View</option>
+                <option value="calendar">Calendar View</option>
+              </select>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="max-w-7xl mx-auto px-4 py-6">
+        <div className="grid grid-cols-1 lg:grid-cols-4 gap-4 mb-6">
+          <div className="bg-white rounded-lg shadow-sm border p-4">
+            <div className="text-sm text-gray-600 mb-1">Total Posts</div>
+            <div className="text-2xl font-bold">{posts.length}</div>
+          </div>
+          
+          <div className="bg-white rounded-lg shadow-sm border p-4">
+            <div className="text-sm text-gray-600 mb-1">Filtered Posts</div>
+            <div className="text-2xl font-bold">{filteredPosts.length}</div>
+          </div>
+          
+          <div className="bg-white rounded-lg shadow-sm border p-4">
+            <div className="text-sm text-gray-600 mb-1">Publications</div>
+            <div className="text-2xl font-bold">{Object.keys(publicationFrequency).length}</div>
+          </div>
+          
+          <div className="bg-white rounded-lg shadow-sm border p-4">
+            <div className="text-sm text-gray-600 mb-1">Avg Reading Time</div>
+            <div className="text-2xl font-bold">
+              {Math.round(filteredPosts.reduce((sum, p) => sum + p.readingTime, 0) / filteredPosts.length || 0)} min
+            </div>
+          </div>
+        </div>
+
+        {Object.keys(publicationFrequency).length > 0 && (
+          <div className="bg-white rounded-lg shadow-sm border p-4 mb-6">
+            <h3 className="font-semibold mb-3">Publication Frequency</h3>
+            <div className="space-y-2">
+              {Object.entries(publicationFrequency)
+                .sort(([, a], [, b]) => b - a)
+                .slice(0, 10)
+                .map(([pub, count]) => (
+                  <div key={pub} className="flex items-center gap-3">
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-medium truncate">{pub}</div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <div className="w-32 bg-gray-200 rounded-full h-2">
+                        <div
+                          className="bg-blue-600 h-2 rounded-full"
+                          style={{ width: `${(count / Math.max(...Object.values(publicationFrequency))) * 100}%` }}
+                        />
+                      </div>
+                      <span className="text-sm text-gray-600 w-8 text-right">{count}</span>
+                    </div>
+                  </div>
+                ))}
+            </div>
+          </div>
+        )}
+
+        {viewMode === 'calendar' ? (
+          <CalendarView />
+        ) : (
+          <div className="space-y-4">
+          {filteredPosts.map(post => (
+            <div key={post.id} className="bg-white rounded-lg shadow-sm border p-6 hover:shadow-md transition">
+              <div className="flex gap-4">
+                {post.publication.logoUrl && (
+                  <img
+                    src={post.publication.logoUrl}
+                    alt={post.publication.name}
+                    className="w-12 h-12 rounded"
+                  />
+                )}
+                
+                <div className="flex-1">
+                  <div className="flex items-start justify-between mb-2">
+                    <div>
+                      <a
+                        href={post.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-xl font-semibold hover:text-blue-600"
+                      >
+                        {post.title}
+                      </a>
+                      {post.subtitle && (
+                        <p className="text-gray-600 mt-1">{post.subtitle}</p>
+                      )}
+                    </div>
+                    
+                    <span className="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded">
+                      {post.bucket}
+                    </span>
+                  </div>
+                  
+                  <div className="flex items-center gap-4 text-sm text-gray-600 mb-3">
+                    <div className="flex items-center gap-1">
+                      <User className="w-4 h-4" />
+                      <span>{post.author.name}</span>
+                    </div>
+                    
+                    <div className="flex items-center gap-1">
+                      <Calendar className="w-4 h-4" />
+                      <span>{post.publishedAt.toLocaleDateString()}</span>
+                      <span className="text-gray-400">
+                        {post.publishedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      </span>
+                    </div>
+                    
+                    <div className="flex items-center gap-1">
+                      <FileText className="w-4 h-4" />
+                      <span>{post.wordCount.toLocaleString()} words</span>
+                    </div>
+                    
+                    <div className="flex items-center gap-1">
+                      <Clock className="w-4 h-4" />
+                      <span>{post.readingTime} min read</span>
+                    </div>
+                  </div>
+                  
+                  <p className="text-gray-700 text-sm mb-3">{post.preview}</p>
+                  
+                  <div className="flex items-center justify-between">
+                    <a
+                      href={post.publication.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-sm text-blue-600 hover:underline"
+                    >
+                      {post.publication.name}
+                    </a>
+                    
+                    <a
+                      href={post.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-sm bg-gray-100 hover:bg-gray-200 px-3 py-1 rounded"
+                    >
+                      Read Article →
+                    </a>
+                  </div>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+        )}
+        
+        {filteredPosts.length === 0 && (
+          <div className="text-center py-12 text-gray-500">
+            No posts match your filters
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+export default SubstackFeedReader;
