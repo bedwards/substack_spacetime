@@ -1,6 +1,5 @@
 export default {
   async fetch(request) {
-    // Handle CORS preflight
     if (request.method === 'OPTIONS') {
       return new Response(null, {
         headers: {
@@ -14,15 +13,16 @@ export default {
     const token = request.headers.get('X-Substack-Token');
     
     const response = await fetch('https://substack.com/api/v1/reader/inbox', {
+      method: 'GET',
       headers: {
         'Cookie': `substack.sid=${token}`,
-        'Content-Type': 'application/json'
+        'User-Agent': 'Mozilla/5.0'
       }
     });
 
-    const data = await response.json();
+    const text = await response.text();
     
-    return new Response(JSON.stringify(data), {
+    return new Response(text, {
       headers: {
         'Content-Type': 'application/json',
         'Access-Control-Allow-Origin': '*'
