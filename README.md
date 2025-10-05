@@ -23,8 +23,6 @@ Substack SpaceTime lets you explore your Substack subscriptions through time and
 - All client-side: no backend, no data stored
 - Deploy easily on **GitHub Pages**
 
-## Setup
+![](substack_spacetime_logo.png)
 
-1. Fork or clone this repo:
-   ```bash
-   git clone https://github.com/yourname/substack_spacetime.git
+![](substack_spacetime_art.png)
